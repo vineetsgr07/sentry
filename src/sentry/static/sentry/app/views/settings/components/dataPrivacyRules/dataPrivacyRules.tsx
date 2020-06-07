@@ -10,29 +10,20 @@ import ExternalLink from 'app/components/links/externalLink';
 import Button from 'app/components/button';
 import {Organization, Project} from 'app/types';
 
-import {defaultSuggestions as sourceDefaultSuggestions} from './dataPrivacyRulesForm/dataPrivacyRulesFormSourceSuggestions';
-import DataPrivacyRulesModal from './dataPrivacyRulesModal';
-import DataPrivacyRulesPanelContent from './dataPrivacyRulesContent';
-import DataPrivacyRulesPanelForm from './dataPrivacyRulesForm/dataPrivacyRulesForm';
+import Dialog from './dialog';
+import Content from './content';
 import OrganizationRules from './organizationRules';
-import {Rule, EventIdStatus} from './types';
+import {Rule, EventIdStatus, SourceSuggestion, Errors, EventId} from './types';
 import convertRelayPiiConfig from './convertRelayPiiConfig';
-import getRelayPiiConfig from './getRelayPiiConfig';
+import submitRules from './submitRules';
+import handleError from './handleError';
 
 const ADVANCED_DATASCRUBBING_LINK =
   'https://docs.sentry.io/data-management/advanced-datascrubbing/';
 
-type DataPrivacyRulesPanelFormProps = React.ComponentProps<
-  typeof DataPrivacyRulesPanelForm
->;
-type ModalProps = React.ComponentProps<typeof DataPrivacyRulesModal>;
-type SourceSuggestions = ModalProps['sourceSuggestions'];
-type Errors = DataPrivacyRulesPanelFormProps['errors'];
-
 type Props = {
   endpoint: string;
   organization: Organization;
-  onSubmitSuccess: (resp: Organization | Project) => void;
   projectId?: Project['id'];
   relayPiiConfig?: string;
   additionalContext?: React.ReactNode;
@@ -42,12 +33,13 @@ type Props = {
 type State = {
   rules: Array<Rule>;
   savedRules: Array<Rule>;
-  relayPiiConfig?: string;
-  sourceSuggestions: SourceSuggestions;
-  eventId: ModalProps['eventId'];
+  sourceSuggestions: Array<SourceSuggestion>;
+  eventId: EventId;
   orgRules: Array<Rule>;
+  errors: Errors;
   showAddRuleModal?: boolean;
   isProjectLevel?: boolean;
+  relayPiiConfig?: string;
 };
 
 class DataPrivacyRules extends React.Component<Props, State> {
@@ -60,6 +52,7 @@ class DataPrivacyRules extends React.Component<Props, State> {
       value: '',
     },
     orgRules: [],
+    errors: {},
     isProjectLevel: this.props.endpoint.includes('projects'),
   };
 
@@ -141,7 +134,7 @@ class DataPrivacyRules extends React.Component<Props, State> {
         `/organizations/${organization.slug}/data-scrubbing-selector-suggestions/`,
         {query}
       );
-      const sourceSuggestions: SourceSuggestions = rawSuggestions.suggestions;
+      const sourceSuggestions: Array<SourceSuggestion> = rawSuggestions.suggestions;
 
       if (sourceSuggestions && sourceSuggestions.length > 0) {
         this.setState(prevState => ({
@@ -171,112 +164,72 @@ class DataPrivacyRules extends React.Component<Props, State> {
     }
   };
 
-  handleSubmit = async (rules: Array<Rule>) => {
-    const {endpoint, onSubmitSuccess} = this.props;
-
-    const errors: Errors = {};
-
-    const relayPiiConfig = getRelayPiiConfig(rules);
-
-    return await this.api
-      .requestPromise(endpoint, {
-        method: 'PUT',
-        data: {relayPiiConfig},
-      })
-      .then(result => {
-        onSubmitSuccess(result);
-        this.setState({relayPiiConfig});
-      })
-      .then(() => {
-        addSuccessMessage(t('Successfully saved data scrubbing rule'));
-        return undefined;
-      })
-      .catch(error => {
-        const errorMessage = error.responseJSON?.relayPiiConfig?.[0];
-
-        if (!errorMessage) {
-          addErrorMessage(t('Unknown error occurred while saving data scrubbing rule'));
-          return undefined;
-        }
-
-        if (errorMessage.startsWith('invalid selector: ')) {
-          for (const line of errorMessage.split('\n')) {
-            if (line.startsWith('1 | ')) {
-              const selector = line.slice(3);
-              errors.source = t('Invalid source value: %s', selector);
-              break;
-            }
-          }
-          return {
-            errors,
-          };
-        }
-
-        if (errorMessage.startsWith('regex parse error:')) {
-          for (const line of errorMessage.split('\n')) {
-            if (line.startsWith('error:')) {
-              const regex = line.slice(6).replace(/at line \d+ column \d+/, '');
-              errors.customRegularExpression = t('Invalid regex: %s', regex);
-              break;
-            }
-          }
-          return {
-            errors,
-          };
-        }
-
-        addErrorMessage(t('Unknown error occurred while saving data scrubbing rule'));
-        return undefined;
-      });
+  convertRequestError = (error: ReturnType<typeof handleError>) => {
+    switch (error.type) {
+      case RequestError.InvalidSelector:
+        this.setState(prevState => ({
+          errors: {
+            ...prevState.errors,
+            source: error.message,
+          },
+        }));
+        break;
+      case RequestError.RegexParse:
+        this.setState(prevState => ({
+          errors: {
+            ...prevState.errors,
+            customRegex: error.message,
+          },
+        }));
+        break;
+      default:
+        addErrorMessage(error.message);
+    }
   };
 
-  handleAddRule = async (rule: Rule) => {
-    const newRule = {
-      ...rule,
-      id: this.state.rules.length,
-    };
-
-    const rules = [...this.state.rules, newRule];
-
-    return await this.handleSubmit(rules).then(result => {
-      if (!result) {
-        this.setState({
-          rules,
-        });
-        return undefined;
+  handleSave = async (rules: Array<Rule>, successMessage: string) => {
+    const {endpoint} = this.props;
+    try {
+      const data = await submitRules(this.api, endpoint, rules);
+      if (data?.relayPiiConfig) {
+        const convertedRules = convertRelayPiiConfig(data.relayPiiConfig);
+        this.setState({rules: convertedRules});
+        addSuccessMessage(successMessage);
       }
-      return result;
-    });
+    } catch (error) {
+      this.convertRequestError(handleError(error));
+    }
   };
 
-  handleUpdateRule = async (updatedRule: Rule) => {
-    const rules = this.state.rules.map(rule => {
-      if (rule.id === updatedRule.id) {
-        return updatedRule;
-      }
-      return rule;
-    });
-
-    return await this.handleSubmit(rules).then(result => {
-      if (!result) {
-        this.setState({
-          rules,
-        });
-        return undefined;
-      }
-      return result;
-    });
+  handleAddRule = (rule: Rule) => {
+    const {rules} = this.state;
+    const newRule = {...rule, id: rules.length};
+    const updatedRules = [...rules, newRule];
+    this.handleSave(updatedRules, t('Successfully added rule'));
   };
 
-  handleDeleteRule = async (rulesToBeDeleted: Array<Rule['id']>) => {
+  handleUpdateRule = (updatedRule: Rule) => {
+    console.log('rule', updatedRule);
+    // const rules = this.state.rules.map(rule => {
+    //   if (rule.id === updatedRule.id) {
+    //     return updatedRule;
+    //   }
+    //   return rule;
+    // });
+    // return await this.handleSubmit(rules).then(result => {
+    //   if (!result) {
+    //     this.setState({
+    //       rules,
+    //     });
+    //     return undefined;
+    //   }
+    //   return result;
+    // });
+  };
+
+  handleDeleteRule = (rulesToBeDeleted: Array<Rule['id']>) => {
     const rules = this.state.rules.filter(rule => !rulesToBeDeleted.includes(rule.id));
-    await this.handleSubmit(rules).then(result => {
-      if (!result) {
-        this.setState({
-          rules,
-        });
-      }
-    });
+    this.handleSave(rules, t('Successfully deleted rule'));
   };
 
   handleToggleAddRuleModal = (showAddRuleModal: boolean) => () => {
@@ -305,6 +258,7 @@ class DataPrivacyRules extends React.Component<Props, State> {
       eventId,
       orgRules,
       isProjectLevel,
+      errors,
     } = this.state;
 
     return (
@@ -326,7 +280,7 @@ class DataPrivacyRules extends React.Component<Props, State> {
           </PanelAlert>
           <PanelBody>
             {isProjectLevel && <OrganizationRules rules={orgRules} />}
-            <DataPrivacyRulesPanelContent
+            <Content
               rules={rules}
               onDeleteRule={this.handleDeleteRule}
               onUpdateRule={this.handleUpdateRule}
@@ -354,7 +308,7 @@ class DataPrivacyRules extends React.Component<Props, State> {
           </PanelBody>
         </Panel>
         {showAddRuleModal && (
-          <DataPrivacyRulesModal
+          <Dialog
             sourceSuggestions={sourceSuggestions}
             onSaveRule={this.handleAddRule}
             onClose={this.handleToggleAddRuleModal(false)}
