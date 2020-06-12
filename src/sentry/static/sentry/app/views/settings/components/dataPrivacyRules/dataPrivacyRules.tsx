@@ -28,11 +28,13 @@ import {
 const ADVANCED_DATASCRUBBING_LINK =
   'https://docs.sentry.io/data-management/advanced-datascrubbing/';
 
-type Props = {
+type ProjectId = Project['id'] | undefined;
+
+type Props<T extends ProjectId> = {
   endpoint: string;
   organization: Organization;
-  onSubmitSuccess: (data: any) => void;
-  projectId?: Project['id'];
+  onSubmitSuccess?: (data: T extends undefined ? Organization : Project) => void;
+  projectId?: T;
   relayPiiConfig?: string;
   additionalContext?: React.ReactNode;
   disabled?: boolean;
@@ -50,7 +52,10 @@ type State = {
   relayPiiConfig?: string;
 };
 
-class DataPrivacyRules extends React.Component<Props, State> {
+class DataPrivacyRules<T extends ProjectId = undefined> extends React.Component<
+  Props<T>,
+  State
+> {
   state: State = {
     rules: [],
     savedRules: [],
@@ -70,7 +75,7 @@ class DataPrivacyRules extends React.Component<Props, State> {
     this.loadOrganizationRules();
   }
 
-  componentDidUpdate(_prevProps: Props, prevState: State) {
+  componentDidUpdate(_prevProps: Props<T>, prevState: State) {
     if (prevState.relayPiiConfig !== this.state.relayPiiConfig) {
       this.loadRules();
     }
@@ -208,7 +213,9 @@ class DataPrivacyRules extends React.Component<Props, State> {
         const convertedRules = convertRelayPiiConfig(data.relayPiiConfig);
         this.setState({rules: convertedRules});
         addSuccessMessage(successMessage);
-        onSubmitSuccess(data);
+        if (onSubmitSuccess) {
+          onSubmitSuccess(data);
+        }
       }
     } catch (error) {
       this.convertRequestError(handleError(error));
