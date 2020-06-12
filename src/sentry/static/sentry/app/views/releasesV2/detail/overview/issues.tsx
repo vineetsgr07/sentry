@@ -138,7 +138,7 @@ class Issues extends React.Component<Props, State> {
     return (
       <Panel>
         <PanelBody>
-          <EmptyStateWarning small withIcon={false}>
+          <EmptyStateWarning small icon={false}>
             {issuesType === IssuesType.NEW &&
               tct('No new issues in this release for the [timePeriod].', {
                 timePeriod: displayedPeriod,
