@@ -10,6 +10,7 @@ import ExternalLink from 'app/components/links/externalLink';
 import Button from 'app/components/button';
 import {Organization, Project} from 'app/types';
 
+import {valueSuggestions} from './utils';
 import Dialog from './dialog';
 import Content from './content';
 import OrganizationRules from './organizationRules';
@@ -123,7 +124,7 @@ class DataPrivacyRules<T extends ProjectId = undefined> extends React.Component<
 
     if (!eventId.value) {
       this.setState(prevState => ({
-        sourceSuggestions: sourceDefaultSuggestions,
+        sourceSuggestions: valueSuggestions,
         eventId: {
           ...prevState.eventId,
           status: undefined,
@@ -133,7 +134,7 @@ class DataPrivacyRules<T extends ProjectId = undefined> extends React.Component<
     }
 
     this.setState(prevState => ({
-      sourceSuggestions: sourceDefaultSuggestions,
+      sourceSuggestions: valueSuggestions,
       eventId: {
         ...prevState.eventId,
         status: EventIdStatus.LOADING,
@@ -166,7 +167,7 @@ class DataPrivacyRules<T extends ProjectId = undefined> extends React.Component<
       }
 
       this.setState(prevState => ({
-        sourceSuggestions: sourceDefaultSuggestions,
+        sourceSuggestions: valueSuggestions,
         eventId: {
           ...prevState.eventId,
           status: EventIdStatus.NOT_FOUND,
